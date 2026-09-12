@@ -9,5 +9,5 @@
 5. Run main script
     `./bin/python main.py`
 
-It can take couple minutes to compile liboqs first time.\n
+It can take couple minutes to compile liboqs first time.
 That's it. Enjoy.
