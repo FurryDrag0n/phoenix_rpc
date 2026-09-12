@@ -1,0 +1,19 @@
+[daemon]
+url = "http://127.0.0.1:18344"
+user = "user"
+password = "****"
+
+[proxy]
+host = "127.0.0.1"
+port = 666
+
+[wallet]
+sat_per_byte = 1
+dust_threshold = 1000
+testnet = true
+
+[database]
+path = "wallets.db"
+
+[falcon]
+prefix_p2sh = 0xc4  # 0x14 в десятичной, для Novacoin mainnet
