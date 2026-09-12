@@ -8,5 +8,6 @@
     `./bin/pip install -r requirements.txt`
 5. Run main script
     `./bin/python main.py`
-It can take couple minutes to compile liboqs first time.
+
+It can take couple minutes to compile liboqs first time.\n
 That's it. Enjoy.
