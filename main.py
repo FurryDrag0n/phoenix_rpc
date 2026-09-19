@@ -13,6 +13,7 @@ from newaddress import generate_address
 from group_tx import handle_listunspent, handle_getbalance
 from unlock import handle_sendtoaddress, set_keypair
 from utxo_parser import run_parser_loop
+from pow_work import handle_getwork_request, handle_getwork_submit
 import hashlib
 
 try:
@@ -90,6 +91,22 @@ def rpc_proxy():
         if method == 'sendtoaddress':
             txid = handle_sendtoaddress(params, rpc_config, broadcast=True)
             return jsonify({"result": txid, "error": None, "id": req_id})
+            
+        if method == 'getwork':
+            try:
+                if not params:
+                    result = handle_getwork_request(rpc_config, pubkey_hash)
+                else:
+                    result = handle_getwork_submit(params[0], rpc_config)
+                return jsonify({"result": result, "error": None, "id": req_id})
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return jsonify({
+                    "result": None,
+                    "error": {"code": -1, "message": str(e)},
+                    "id": req_id,
+                })
 
     except Exception as e:
         print(f"[PROXY] {method} error: {e}")
