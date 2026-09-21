@@ -14,6 +14,7 @@ from group_tx import handle_listunspent, handle_getbalance
 from unlock import handle_sendtoaddress, set_keypair
 from utxo_parser import run_parser_loop
 from pow_work import handle_getwork_request, handle_getwork_submit
+from pos_miner import set_falcon_keys as pos_set_falcon, run_pos_miner
 import hashlib
 
 try:
@@ -36,6 +37,7 @@ app = Flask(__name__)
 
 pubkey, secret = keychain.get_or_create_keypair()
 set_keypair(pubkey, secret)
+pos_set_falcon(pubkey, secret)
 pubkey_hash = hashlib.sha256(pubkey).digest()
 print(f"[KEYCHAIN] Key loaded: pubkey={len(pubkey)}B secret={len(secret)}B")
 
@@ -147,6 +149,14 @@ if __name__ == '__main__':
         daemon=True,
     )
     parser_thread.start()
+    
+    pos_thread = threading.Thread(
+        target=run_pos_miner,
+        args=(rpc_config,),
+        daemon=True,
+    )
+    pos_thread.start()
+    print("[MAIN] PoS miner started in background")
 
     print(f"[MAIN] Proxy on {PROXY_HOST}:{PROXY_PORT}")
     print(f"[MAIN] Forwarding to {DEMON_URL}")
