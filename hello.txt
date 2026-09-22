@@ -5,4 +5,4 @@
  / /  / / / / /_/ / /__/ /|  / / / /\ \
 /_/  /_/ /_/\____/____/_/ |_/_/ /_/ /_/
 Copyright (c) MMXXVI Silent58
-phoenix_rpc v0.1.0-alpha
+phoenix_rpc v0.2.0-alpha
