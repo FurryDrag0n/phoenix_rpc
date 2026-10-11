@@ -1,6 +1,7 @@
 import os
 import struct
 import hashlib
+import hmac
 import getpass
 import gostcrypto
 import oqs
@@ -22,6 +23,12 @@ SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_MAXMEM = 64 * 1024 * 1024
+
+WALLET_SALT_SIZE = 16
+COUNTER_SIZE = 8
+
+MASTER_KEY_INFO = b"phoenix-wallet-master-key/v1"
+SALT_INFO = b"phoenix-wallet-salt/v1"
 
 def derive_keys(password: bytes, salt: bytes):
     material = hashlib.scrypt(
@@ -58,6 +65,7 @@ def encrypt_keypair(pubkey: bytes, secret: bytes, password: bytes) -> bytes:
     mac = mac_obj.digest(MAC_LEN)
 
     return MAGIC + bytes([VERSION]) + salt + nonce + ciphertext + mac
+
 
 def decrypt_keypair(blob: bytes, password: bytes):
     if len(blob) < MAGIC_LEN + 1 + SALT_SIZE + NONCE_SIZE + MAC_LEN:
@@ -109,13 +117,58 @@ def hmac_compare(a: bytes, b: bytes) -> bool:
         result |= x ^ y
     return result == 0
 
+def _hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
+    return hmac.new(salt, ikm, hashlib.sha256).digest()
+
+
+def _hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
+    okm = b""
+    t = b""
+    i = 1
+    while len(okm) < length:
+        t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
+        okm += t
+        i += 1
+    return okm[:length]
+
+
+def derive_master_key(secret: bytes, pubkey: bytes) -> bytes:
+    prk = _hkdf_extract(salt=b"", ikm=secret)
+    return _hkdf_expand(prk, MASTER_KEY_INFO + pubkey, 32)
+
+
+def derive_salt(master_key: bytes, counter: int) -> bytes:
+    if not (0 <= counter < 2**64):
+        raise ValueError("counter out of range")
+    msg = SALT_INFO + counter.to_bytes(COUNTER_SIZE, "big")
+    return hmac.new(master_key, msg, hashlib.sha256).digest()[:WALLET_SALT_SIZE]
+
+_master_key: bytes | None = None
+
+
+def init_master_key(secret: bytes, pubkey: bytes) -> bytes:
+    global _master_key
+    _master_key = derive_master_key(secret, pubkey)
+    return _master_key
+
+
+def get_master_key() -> bytes:
+    if _master_key is None:
+        raise RuntimeError(
+            "master key not initialized — get_or_create_keypair() "
+            "или init_master_key() должны быть вызваны раньше"
+        )
+    return _master_key
+
 def get_or_create_keypair(password: str = None):
     if os.path.exists(KEYPAIR_FILE):
         if password is None:
             password = getpass.getpass("Wallet password: ")
         with open(KEYPAIR_FILE, "rb") as f:
             blob = f.read()
-        return decrypt_keypair(blob, password.encode("utf-8"))
+        pubkey, secret = decrypt_keypair(blob, password.encode("utf-8"))
+        init_master_key(secret, pubkey)
+        return pubkey, secret
 
     if password is None:
         p1 = getpass.getpass("Please, set wallet password: ")
@@ -133,4 +186,5 @@ def get_or_create_keypair(password: str = None):
         f.write(blob)
     os.chmod(KEYPAIR_FILE, 0o600)
 
+    init_master_key(secret, pubkey)
     return pubkey, secret

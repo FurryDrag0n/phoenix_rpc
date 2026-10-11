@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-Схема БД Phoenix.
-Единый источник правды по сети — config.toml [network].testnet.
-
-Таблицы:
-  wallets  — сгенерированные Falcon-адреса (соль + скрипты)
-  utxos    — непотраченные выходы (чистый набор для траты)
-  history  — вся история событий (signed amounts, тип операции)
-"""
-
 import sqlite3
 import toml
 
@@ -32,6 +21,11 @@ def checkpoint_wal():
     conn.close()
 
 
+def _column_exists(c, table: str, column: str) -> bool:
+    c.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in c.fetchall())
+
+
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
@@ -52,9 +46,21 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_wallets_script_hash ON wallets(script_hash)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_wallets_account ON wallets(account)')
 
+    # ---------- миграция: counter ----------
+    # Детерминированный счётчик соли. NULL для адресов, сгенерированных
+    # до перехода на детерминированную схему (у них соль была случайной).
+    if not _column_exists(c, "wallets", "counter"):
+        c.execute("ALTER TABLE wallets ADD COLUMN counter INTEGER")
+        print("[DB] Migrated: added wallets.counter")
+
+    # Источник истины для следующего counter = MAX(counter)+1 WHERE counter IS NOT NULL.
+    # UNIQUE — страховка от рассинхрона; NULL-ы не конфликтуют между собой.
+    c.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_counter
+        ON wallets(counter) WHERE counter IS NOT NULL
+    ''')
+
     # ---------- utxos ----------
-    # Чистый набор непотраченных выходов. Тип операции (mined/receive/send)
-    # хранится в history, а не здесь.
     c.execute('''
         CREATE TABLE IF NOT EXISTS utxos (
             txid          TEXT NOT NULL,
@@ -70,21 +76,6 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_utxos_block_height ON utxos(block_height)')
 
     # ---------- history ----------
-    # Вся история событий кошелька. category:
-    #   receive       — входящий платёж
-    #   send          — исходящий платёж (с внешним получателем)
-    #   consolidate   — консолидация (все выходы наши)
-    #   mined_pow     — PoW-награда (coinbase)
-    #   mined_pos     — PoS-награда (coinstake)
-    #
-    # amount_net — знаковая нетто-сумма для кошелька:
-    #   receive/mined_*  → положительная
-    #   send/consolidate → отрицательная (учитывая fee)
-    #   при нуле (net-0 блок) → 0
-    #
-    # fee — только для send/consolidate (0 иначе)
-    # address — наш адрес для receive/mined_*, адрес получателя для send
-    # block_height — NULL для неподтверждённых (мемпул)
     c.execute('''
         CREATE TABLE IF NOT EXISTS history (
             txid          TEXT PRIMARY KEY,

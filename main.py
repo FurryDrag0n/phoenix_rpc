@@ -6,6 +6,7 @@ import toml
 from flask import Flask, request, jsonify, Response
 from functools import wraps
 import requests
+import argparse
 
 if not os.path.isfile("config.toml"):
     import conf_gen
@@ -153,18 +154,50 @@ def graceful_shutdown(signum, frame):
 signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
+def _parse_args():
+    p = argparse.ArgumentParser(prog="main.py")
+    p.add_argument("--recover", action="store_true",
+                   help="Start address recovery in background")
+    p.add_argument("--recover-from", type=int, default=1_100_000,
+                   help="Recover from height (1100000 by default)")
+    p.add_argument("--recover-batch", type=int, default=20,
+                   help="Address batch size")
+    return p.parse_args()
+
 if __name__ == '__main__':
+    args = _parse_args()
+
     init_db()
     checkpoint_wal()
 
     rpc_config = {"url": DEMON_URL, "user": DEMON_USER, "password": DEMON_PASS}
+
     parser_thread = threading.Thread(
         target=run_parser_loop,
         args=(rpc_config,),
         daemon=True,
     )
     parser_thread.start()
-    
+
+    if args.recover:
+        from recover import recover as run_recover
+
+        def _recover_worker():
+            try:
+                run_recover(
+                    rpc_config,
+                    start_height=args.recover_from,
+                    batch_size=args.recover_batch,
+                    pubkey_hash=pubkey_hash,
+                    master_key=keychain.get_master_key(),
+                )
+            except Exception as e:
+                print(f"[MAIN] Recover failed: {e}")
+
+        recover_thread = threading.Thread(target=_recover_worker, daemon=True)
+        recover_thread.start()
+        print(f"[MAIN] Recover started in background (from height {args.recover_from})")
+
     pos_thread = threading.Thread(
         target=run_pos_miner,
         args=(rpc_config,),
