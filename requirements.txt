@@ -2,6 +2,7 @@
 liboqs-python>=0.16.0
 gostcrypto>=1.2.5
 ecdsa >= 0.19.2 # костыль для PoS блоков, монеты не блокирует
+pycryptodome >= 4.0.0
 
 # Bitcoin-утилиты
 base58>=2.1.1

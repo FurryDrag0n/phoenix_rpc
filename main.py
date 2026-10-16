@@ -1,4 +1,6 @@
 import os
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 import signal
 import sys
 import threading
@@ -6,7 +8,6 @@ import toml
 from flask import Flask, request, jsonify, Response
 from functools import wraps
 import requests
-import argparse
 
 if not os.path.isfile("config.toml"):
     import conf_gen
@@ -17,12 +18,17 @@ if not os.path.isfile("config.toml"):
 from db import init_db, checkpoint_wal
 import keychain
 from newaddress import generate_address
+from pstore import (
+    handle_pstore, set_keys as pstore_set_keys,
+    handle_pload, handle_pcancel,
+)
 from group_tx import handle_listunspent, handle_getbalance, handle_listtransactions
 from unlock import handle_sendtoaddress, handle_signrawtransaction, set_keypair
 from utxo_parser import run_parser_loop
 from pow_work import handle_getwork_request, handle_getwork_submit
 from pos_miner import set_falcon_keys as pos_set_falcon, run_pos_miner
 import hashlib
+import argparse
 
 try:
     with open("hello.txt", "r", encoding="utf-8") as f:
@@ -48,13 +54,17 @@ pubkey, secret = keychain.get_or_create_keypair()
 set_keypair(pubkey, secret)
 pos_set_falcon(pubkey, secret)
 pubkey_hash = hashlib.sha256(pubkey).digest()
+pstore_set_keys(pubkey, secret)
 print(f"[KEYCHAIN] Key loaded: pubkey={len(pubkey)}B secret={len(secret)}B")
+
 
 def check_auth(username, password):
     return username == PROXY_USER and password == PROXY_PASS
 
+
 def authenticate():
     return Response('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="RPC Proxy"'})
+
 
 def requires_auth(f):
     @wraps(f)
@@ -64,6 +74,7 @@ def requires_auth(f):
             return authenticate()
         return f(*args, **kwargs)
     return decorated
+
 
 @app.route('/', methods=['POST'])
 @requires_auth
@@ -86,6 +97,55 @@ def rpc_proxy():
             with open("wallet_changed.flag", "w") as f:
                 f.write("1")
             return jsonify({"result": info["address"], "error": None, "id": req_id})
+
+        if method == 'pstore':
+            if not params:
+                return jsonify({
+                    "result": None,
+                    "error": {"code": -1, "message": "file path or URL required"},
+                    "id": req_id,
+                }), 400
+            try:
+                result = handle_pstore(params, rpc_config)
+                return jsonify({"result": result, "error": None, "id": req_id})
+            except Exception as e:
+                print(f"[PROXY] pstore error: {e}")
+                return jsonify({
+                    "result": None,
+                    "error": {"code": -1, "message": str(e)},
+                    "id": req_id,
+                }), 400
+                
+        if method == 'pload':
+            if not params:
+                return jsonify({
+                    "result": None,
+                    "error": {"code": -1, "message": "file_id required"},
+                    "id": req_id,
+                }), 400
+            try:
+                # params: [file_id, ext?]
+                result = handle_pload(params, rpc_config)
+                return jsonify({"result": result, "error": None, "id": req_id})
+            except Exception as e:
+                print(f"[PROXY] pload error: {e}")
+                return jsonify({
+                    "result": None,
+                    "error": {"code": -1, "message": str(e)},
+                    "id": req_id,
+                }), 400
+            
+        if method == 'pcancel':
+            try:
+                result = handle_pcancel(params, rpc_config)
+                return jsonify({"result": result, "error": None, "id": req_id})
+            except Exception as e:
+                print(f"[PROXY] pcancel error: {e}")
+                return jsonify({
+                    "result": None,
+                    "error": {"code": -1, "message": str(e)},
+                    "id": req_id,
+                }), 400
 
         if method == 'listunspent':
             return jsonify({
@@ -147,9 +207,15 @@ def rpc_proxy():
             "id": req_id,
         })
 
+
 def graceful_shutdown(signum, frame):
     print("\n[MAIN] Signal received, shutting down...")
+    try:
+        checkpoint_wal()
+    except Exception:
+        pass
     sys.exit(0)
+
 
 signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
@@ -164,21 +230,21 @@ def _parse_args():
                    help="Address batch size")
     return p.parse_args()
 
+
 if __name__ == '__main__':
     args = _parse_args()
-
+    
     init_db()
     checkpoint_wal()
 
     rpc_config = {"url": DEMON_URL, "user": DEMON_USER, "password": DEMON_PASS}
-
     parser_thread = threading.Thread(
         target=run_parser_loop,
         args=(rpc_config,),
         daemon=True,
     )
     parser_thread.start()
-
+    
     if args.recover:
         from recover import recover as run_recover
 
@@ -196,6 +262,7 @@ if __name__ == '__main__':
 
         recover_thread = threading.Thread(target=_recover_worker, daemon=True)
         recover_thread.start()
+
         print(f"[MAIN] Recover started in background (from height {args.recover_from})")
 
     pos_thread = threading.Thread(

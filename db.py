@@ -30,7 +30,6 @@ def init_db():
     conn = get_db_connection()
     c = conn.cursor()
 
-    # ---------- wallets ----------
     c.execute('''
         CREATE TABLE IF NOT EXISTS wallets (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,21 +45,15 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_wallets_script_hash ON wallets(script_hash)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_wallets_account ON wallets(account)')
 
-    # ---------- миграция: counter ----------
-    # Детерминированный счётчик соли. NULL для адресов, сгенерированных
-    # до перехода на детерминированную схему (у них соль была случайной).
     if not _column_exists(c, "wallets", "counter"):
         c.execute("ALTER TABLE wallets ADD COLUMN counter INTEGER")
         print("[DB] Migrated: added wallets.counter")
 
-    # Источник истины для следующего counter = MAX(counter)+1 WHERE counter IS NOT NULL.
-    # UNIQUE — страховка от рассинхрона; NULL-ы не конфликтуют между собой.
     c.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_counter
         ON wallets(counter) WHERE counter IS NOT NULL
     ''')
 
-    # ---------- utxos ----------
     c.execute('''
         CREATE TABLE IF NOT EXISTS utxos (
             txid          TEXT NOT NULL,
@@ -75,7 +68,6 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_utxos_spent ON utxos(spent)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_utxos_block_height ON utxos(block_height)')
 
-    # ---------- history ----------
     c.execute('''
         CREATE TABLE IF NOT EXISTS history (
             txid          TEXT PRIMARY KEY,
@@ -96,6 +88,39 @@ def init_db():
     c.execute('CREATE INDEX IF NOT EXISTS idx_history_block ON history(block_height)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_history_created ON history(created_at)')
     c.execute('CREATE INDEX IF NOT EXISTS idx_history_n_time ON history(n_time)')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS priority_txs (
+            txid         TEXT PRIMARY KEY,
+            chain_id     TEXT NOT NULL,
+            kind         TEXT NOT NULL,
+            seq          INTEGER NOT NULL,
+            raw          BLOB NOT NULL,
+            prev_txid    TEXT,
+            prev_vout    INTEGER,
+            size         INTEGER NOT NULL,
+            n_time       INTEGER,
+            added_at     INTEGER DEFAULT (strftime('%s','now')),
+            comment      TEXT
+        )
+    ''')
+    c.execute('''
+        CREATE INDEX IF NOT EXISTS idx_priority_chain
+        ON priority_txs(chain_id, seq)
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pstore_anchor (
+            id            INTEGER PRIMARY KEY CHECK (id = 1),
+            txid          TEXT,
+            vout          INTEGER DEFAULT 0,
+            redeem_script BLOB,
+            address       TEXT,
+            confirmed     INTEGER DEFAULT 0,
+            updated_at    INTEGER DEFAULT (strftime('%s','now'))
+        )
+    ''')
+    c.execute('INSERT OR IGNORE INTO pstore_anchor (id) VALUES (1)')
 
     conn.commit()
     conn.close()

@@ -37,9 +37,19 @@ if F_TESTNET:
 else:
     PREFIX_P2PKH = 0x08
     PREFIX_P2SH  = 0x14
+    
+try:
+    from Crypto.Hash import RIPEMD160
+    def _ripemd160(data: bytes) -> bytes:
+        h = RIPEMD160.new()
+        h.update(data)
+        return h.digest()
+except ImportError:
+    def _ripemd160(data: bytes) -> bytes:
+        return hashlib.new('ripemd160', data).digest()
 
 def hash160(data: bytes) -> bytes:
-    return hashlib.new('ripemd160', hashlib.sha256(data).digest()).digest()
+    return _ripemd160(hashlib.sha256(data).digest())
 
 def base58check_encode(payload: bytes, version_byte: int) -> str:
     versioned = bytes([version_byte]) + payload
